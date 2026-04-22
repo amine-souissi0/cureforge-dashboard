@@ -44,7 +44,8 @@ STATUS_EMOJI = {
 
 @st.cache_data(ttl=30)
 def load_records() -> pd.DataFrame:
-    with SessionLocal() as db:
+    db = SessionLocal()
+    try:
         rows = db.query(OutreachRecord).all()
         data = [
             {
@@ -60,7 +61,9 @@ def load_records() -> pd.DataFrame:
             }
             for r in rows
         ]
-    return pd.DataFrame(data)
+        return pd.DataFrame(data)
+    finally:
+        db.close()
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -136,7 +139,7 @@ def _color_status(val: str) -> str:
 display_cols = ["Name", "Email", "Firm", "Focus Area", "Sent At", "Reply Status", "Reply Received"]
 styled = (
     filtered[display_cols]
-    .style.applymap(_color_status, subset=["Reply Status"])
+    .style.map(_color_status, subset=["Reply Status"])
     .format(
         {
             "Sent At": lambda x: x.strftime("%Y-%m-%d %H:%M") if pd.notna(x) else "—",
