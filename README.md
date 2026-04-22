@@ -1,5 +1,9 @@
 # Communication Agent System — LongevityInTime.org
 
+## Dashboard Preview
+
+![Investor Outreach Dashboard](screenshots/dashboard.png)
+
 Autonomous multi-agent communication system for investor outreach, scientific filings,
 and regulatory submissions. Built with Python, FastAPI, Streamlit, GPT-4, and Resend.
 
