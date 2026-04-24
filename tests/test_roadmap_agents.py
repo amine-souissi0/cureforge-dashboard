@@ -159,7 +159,7 @@ class TestGrantAgent:
             }
         }
 
-        with patch("agents.grant_agent.requests.post", return_value=mock_resp):
+        with patch("agents.grant_agent.post_json", return_value=mock_resp):
             from agents.grant_agent import discover_grants
             results = discover_grants("longevity aging", limit=5)
 
@@ -169,31 +169,65 @@ class TestGrantAgent:
 
     def test_discover_grants_handles_api_error(self):
         import requests as _requests
-        with patch("agents.grant_agent.requests.post", side_effect=_requests.RequestException("timeout")):
+        with patch("agents.grant_agent.post_json", side_effect=_requests.RequestException("timeout")):
             from agents.grant_agent import discover_grants
             results = discover_grants("test")
 
         assert results == []
 
     def test_draft_narrative_contains_key_content(self, sample_opportunity, sample_project):
-        mock_response = _make_openai_response("Specific Aim 1: Identify biomarkers.\nSpecific Aim 2: Validate them.")
-
-        with patch("agents.grant_agent._client.chat.completions.create", return_value=mock_response):
+        with patch("agents.grant_agent.chat_completion_text", return_value="Specific Aim 1: Identify biomarkers.\nSpecific Aim 2: Validate them."):
             from agents.grant_agent import draft_narrative
             result = draft_narrative(sample_opportunity, sample_project)
 
         assert "Specific Aim" in result
 
     def test_draft_narrative_sends_opportunity_to_openai(self, sample_opportunity, sample_project):
-        mock_response = _make_openai_response("narrative text")
-
-        with patch("agents.grant_agent._client.chat.completions.create", return_value=mock_response) as mock_create:
+        with patch("agents.grant_agent.chat_completion_text", return_value="narrative text") as mock_chat:
             from agents.grant_agent import draft_narrative
             draft_narrative(sample_opportunity, sample_project)
 
-        user_msg = next(m for m in mock_create.call_args[1]["messages"] if m["role"] == "user")
-        assert sample_opportunity["title"] in user_msg["content"]
-        assert sample_project["hypothesis"] in user_msg["content"]
+        user_prompt = mock_chat.call_args[1]["user_prompt"]
+        assert sample_opportunity["title"] in user_prompt
+        assert sample_project["hypothesis"] in user_prompt
+
+    def test_validate_project_info_raises_on_missing(self, sample_opportunity):
+        from agents.grant_agent import GrantValidationError, draft_narrative, validate_project_info
+
+        bad = {"title": "only title"}
+        with pytest.raises(GrantValidationError) as exc:
+            validate_project_info(bad)
+        assert "hypothesis" in exc.value.missing
+
+        with pytest.raises(GrantValidationError):
+            draft_narrative(sample_opportunity, bad, validate=True)
+
+    def test_draft_narrative_workflow_returns_steps(self, sample_opportunity, sample_project):
+        with patch(
+            "agents.grant_agent.chat_completion_text",
+            side_effect=["- outline bullet", "draft body", "1. critique item", "final narrative text"],
+        ):
+            from agents.grant_agent import draft_narrative_workflow
+            out = draft_narrative_workflow(sample_opportunity, sample_project, include_landscape=False)
+
+        assert out["narrative"] == "final narrative text"
+        assert "critique" in out
+
+    def test_save_application_package_writes_files(self, sample_opportunity, sample_project, tmp_out):
+        from agents.grant_agent import save_application_package
+
+        pkg = save_application_package(
+            "Final narrative.",
+            sample_opportunity,
+            sample_project,
+            output_dir=tmp_out,
+            workflow_artifacts={"outline": "o", "draft": "d", "critique": "c", "narrative": "Final narrative."},
+        )
+        assert pkg.is_dir()
+        assert (pkg / "narrative.md").read_text()
+        assert (pkg / "metadata.json").read_text()
+        assert (pkg / "checklist.md").read_text()
+        assert (pkg / "artifact_outline.md").read_text() == "o"
 
     def test_save_application_creates_file(self, sample_opportunity, tmp_out):
         from agents.grant_agent import save_application
@@ -219,7 +253,7 @@ class TestGrantAgent:
             ]
         }
 
-        with patch("agents.grant_agent.requests.post", return_value=mock_resp):
+        with patch("agents.grant_agent.post_json", return_value=mock_resp):
             from agents.grant_agent import search_nih_reporter
             results = search_nih_reporter("aging biomarkers")
 

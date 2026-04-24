@@ -24,7 +24,9 @@ cp .env.example .env   # fill in your keys
 |---|---|
 | `RESEND_API_KEY` | From [resend.com/api-keys](https://resend.com/api-keys) |
 | `OPENAI_API_KEY` | Your OpenAI key |
-| `WEBHOOK_SECRET` | Secret set in Resend webhook settings |
+| `WEBHOOK_SECRET` | Secret set in Resend webhook signatures |
+| `WEBHOOK_API_KEY` | Optional; if set, required as header `X-Webhook-Api-Key` on `/tasks` |
+| `USE_JSON_LOGGING` | Optional; set `1` or `true` for newline-delimited JSON logs |
 | `FROM_EMAIL` | Verified sender (e.g. `outreach@longevityintime.org`) |
 | `DB_URL` | SQLite path (default: `sqlite:///./outreach.db`) |
 | `ARXIV_USERNAME` | arXiv account username (for SWORD v2 submission) |
@@ -46,7 +48,7 @@ into your DNS provider. Resend verifies automatically within minutes.
 pytest tests/ -v
 ```
 
-- **59 tests pass** with no API keys (all external calls mocked)
+- **71 tests pass** with no API keys (all external calls mocked)
 - **11 tests skip** gracefully until `pip install lxml arxiv` (optional packages)
 
 ---
@@ -55,8 +57,16 @@ pytest tests/ -v
 
 ```
 communication-agent/
+├── core/
+│   ├── llm.py                  # Shared OpenAI chat completion helper
+│   ├── http.py                 # HTTP POST JSON with retries
+│   └── logging_config.py       # Optional JSON log lines to stdout
+├── orchestrator/
+│   └── router.py               # Task dispatch (grant.* and session persistence)
 ├── config/
 │   └── settings.py             # Pydantic settings (loads .env)
+├── docs/
+│   └── WORK_REPORT_VALIDATION.md  # Stakeholder fact-check vs external reviews
 ├── agents/
 │   ├── email_agent.py          # MVP: Resend email sender + DB logging
 │   ├── personalization.py      # MVP: GPT-4 Jinja2 email personalization
@@ -68,9 +78,13 @@ communication-agent/
 │   ├── dua_agent.py            # GPT-4 DUA drafting + data descriptor
 │   └── fda_agent.py            # eCTD package builder + ESG NextGen upload
 ├── models/
-│   └── database.py             # SQLAlchemy OutreachRecord + SQLite
+│   └── database.py             # OutreachRecord, AgentSession + SQLite
+├── templates/
+│   └── grants/
+│       └── narrative_user_prompt.j2   # Grant narrative user prompt template
 ├── webhook/
-│   └── server.py               # FastAPI inbound webhook (POST /webhook)
+│   ├── server.py               # FastAPI: /webhook, /tasks, /health
+│   └── tasks.py                # In-process task queue (BackgroundTasks)
 ├── dashboard/
 │   └── app.py                  # Streamlit status board
 ├── scripts/
@@ -80,8 +94,9 @@ communication-agent/
 │   ├── test_email_agent.py     # 6 tests
 │   ├── test_intent_parser.py   # 8 tests
 │   ├── test_personalization.py # 6 tests
-│   ├── test_webhook.py         # 9 tests
-│   └── test_roadmap_agents.py  # 41 tests (11 skip without lxml/arxiv)
+│   ├── test_webhook.py         # Webhook + task API + health
+│   ├── test_orchestrator.py    # Dispatch + AgentSession persistence
+│   └── test_roadmap_agents.py  # Roadmap agents (11 skip without lxml/arxiv)
 └── data/
     └── investors_sample.csv    # Sample investor list
 ```

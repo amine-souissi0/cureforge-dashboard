@@ -4,6 +4,10 @@ FastAPI webhook server.
 Receives inbound email events from Resend, parses the reply intent via GPT-4,
 and updates the OutreachRecord in the database.
 
+Optional JSON logging: set USE_JSON_LOGGING=1
+Optional task API protection: set WEBHOOK_API_KEY and send header X-Webhook-Api-Key
+(Resend inbound webhooks do not use WEBHOOK_API_KEY — only /tasks and /tasks/{id}.)
+
 Run with:
     uvicorn webhook.server:app --host 0.0.0.0 --port 8000
 """
@@ -15,16 +19,32 @@ from datetime import datetime
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, status
 
 from agents.intent_parser import parse_intent
 from config.settings import settings
+from core.logging_config import configure_json_logging
 from models.database import OutreachRecord, SessionLocal, init_db
+from . import tasks as task_jobs
 
 logger = logging.getLogger(__name__)
 
+
+def _require_tasks_api_key(x_webhook_api_key: str | None) -> None:
+    expected = (settings.webhook_api_key or "").strip()
+    if not expected:
+        return
+    if not x_webhook_api_key or x_webhook_api_key.strip() != expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-Webhook-Api-Key.",
+        )
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    if settings.use_json_logging:
+        configure_json_logging()
     init_db()
     yield
 
@@ -110,7 +130,10 @@ async def handle_webhook(
         )
 
     intent = parse_intent(body_text)
-    logger.info("Reply from %s classified as: %s", sender_email, intent)
+    logger.info(
+        "Inbound reply processed",
+        extra={"sender": sender_email, "intent": intent.value},
+    )
 
     db = SessionLocal()
     try:
@@ -130,3 +153,58 @@ async def handle_webhook(
         db.close()
 
     return {"status": "ok", "intent": intent.value}
+
+
+@app.post("/tasks", status_code=status.HTTP_202_ACCEPTED)
+async def submit_task(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    x_webhook_api_key: str | None = Header(default=None, alias="X-Webhook-Api-Key"),
+) -> dict:
+    """
+    Enqueue a synchronous dispatch job (runs in-process after response).
+
+    Body: {"task_type": "grant.discover", "payload": {"keywords": "aging", "limit": 5}}
+    """
+    _require_tasks_api_key(x_webhook_api_key)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request body is not valid JSON.",
+        )
+    task_type = body.get("task_type")
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    if not task_type or not isinstance(task_type, str):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Missing string 'task_type'.",
+        )
+
+    task_id = task_jobs.enqueue(
+        task_type,
+        payload,
+        SessionLocal,
+        background_tasks.add_task,
+    )
+    logger.info("Task accepted", extra={"task_id": task_id, "task_type": task_type})
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.get("/tasks/{task_id}")
+async def task_status(
+    task_id: str,
+    x_webhook_api_key: str | None = Header(default=None, alias="X-Webhook-Api-Key"),
+) -> dict:
+    """Poll task status populated by the in-memory store."""
+    _require_tasks_api_key(x_webhook_api_key)
+    snap = task_jobs.get_snapshot(task_id)
+    if snap is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown task_id.")
+    return {"task_id": task_id, **snap}
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok"}

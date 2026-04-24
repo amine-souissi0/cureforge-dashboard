@@ -211,3 +211,58 @@ class TestWebhookIntentProcessing:
         )
 
         assert resp.status_code == 400
+
+
+class TestHealthEndpoint:
+    def test_health_ok(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
+
+
+class TestTaskApi:
+    def test_tasks_enqueue_and_complete(self, client, monkeypatch):
+        monkeypatch.setattr("webhook.server.settings.webhook_api_key", "")
+        with patch("orchestrator.router.dispatch", return_value={"opportunities": []}):
+            resp = client.post(
+                "/tasks",
+                json={"task_type": "grant.discover", "payload": {"keywords": "aging"}},
+            )
+        assert resp.status_code == 202
+        task_id = resp.json()["task_id"]
+        status_resp = client.get(f"/tasks/{task_id}")
+        assert status_resp.status_code == 200
+        body = status_resp.json()
+        assert body["status"] == "completed"
+        assert body["result"] == {"opportunities": []}
+
+    def test_tasks_missing_task_type(self, client, monkeypatch):
+        monkeypatch.setattr("webhook.server.settings.webhook_api_key", "")
+        resp = client.post("/tasks", json={"payload": {}})
+        assert resp.status_code == 422
+
+    def test_tasks_require_api_key_when_configured(self, client, monkeypatch):
+        monkeypatch.setattr("webhook.server.settings.webhook_api_key", "secret-key")
+        resp = client.post(
+            "/tasks",
+            json={"task_type": "grant.discover", "payload": {"keywords": "x"}},
+        )
+        assert resp.status_code == 401
+
+        with patch("orchestrator.router.dispatch", return_value={}):
+            ok = client.post(
+                "/tasks",
+                json={"task_type": "grant.discover", "payload": {"keywords": "x"}},
+                headers={"X-Webhook-Api-Key": "secret-key"},
+            )
+        assert ok.status_code == 202
+
+        task_id = ok.json()["task_id"]
+        denied = client.get(f"/tasks/{task_id}")
+        assert denied.status_code == 401
+
+        snap = client.get(
+            f"/tasks/{task_id}",
+            headers={"X-Webhook-Api-Key": "secret-key"},
+        )
+        assert snap.status_code == 200
