@@ -66,3 +66,6 @@ data/raw_webhooks/
 
 # Investor CSV with real data (keep only the sample)
 data/investors.csv
+
+# GCP service account key
+secrets/
