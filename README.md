@@ -28,6 +28,8 @@ cp .env.example .env   # fill in your keys
 | `WEBHOOK_API_KEY` | Optional; if set, required as header `X-Webhook-Api-Key` on `/tasks` |
 | `USE_JSON_LOGGING` | Optional; set `1` or `true` for newline-delimited JSON logs |
 | `FROM_EMAIL` | Verified sender (e.g. `outreach@longevityintime.org`) |
+| `REPLY_TO_EMAIL` | Optional reply-to address for outbound emails |
+| `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD`, `IMAP_FOLDER` | Optional inbox scanner for reply detection |
 | `DB_URL` | SQLite path (default: `sqlite:///./outreach.db`) |
 | `ARXIV_USERNAME` | arXiv account username (for SWORD v2 submission) |
 | `ARXIV_PASSWORD` | arXiv account password |
@@ -117,6 +119,16 @@ python -m scripts.run_outreach --csv data/investors.csv
 
 CSV columns required: `name, email, firm, focus_area` (and optionally `notes`).
 
+### 1b. Send news-triggered drafts from the bridge
+
+Arshie's `scratch_longevity_agent` now queues drafted letters into this database.
+Preview and send them from this project:
+
+```bash
+python -m scripts.send_drafted_outreach --dry-run
+python -m scripts.send_drafted_outreach --limit 25
+```
+
 ### 2. Start the webhook server
 
 ```bash
@@ -125,6 +137,21 @@ uvicorn webhook.server:app --host 0.0.0.0 --port 8000
 
 Configure Resend → Webhooks to POST to `https://<your-domain>/webhook`
 with event type `email.received`.
+
+If replies land in a regular inbox instead, configure the `IMAP_*` variables and run:
+
+```bash
+python -m scripts.scan_replies --limit 50 --mark-seen
+```
+
+### 2b. Run follow-ups
+
+This sends Day 3 and Day 7 bump emails only while `reply_status` is still `pending`.
+
+```bash
+python -m scripts.run_followups --dry-run
+python -m scripts.run_followups --limit 50
+```
 
 ### 3. Open the dashboard
 

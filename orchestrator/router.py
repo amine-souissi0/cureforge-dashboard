@@ -23,7 +23,7 @@ class DispatchError(ValueError):
     pass
 
 
-def dispatch(task_type: str, payload: dict[str, Any], *, db: Session | None = None) -> dict[str, Any]:
+def dispatch(task_type: str, payload: dict[str, Any], *, db: Optional[Session] = None) -> dict[str, Any]:
     """
     Execute a task synchronously and return a JSON-serializable dict.
 

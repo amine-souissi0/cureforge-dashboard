@@ -1,3 +1,4 @@
+from typing import Optional, Any
 """
 FastAPI webhook server.
 
@@ -30,7 +31,7 @@ from . import tasks as task_jobs
 logger = logging.getLogger(__name__)
 
 
-def _require_tasks_api_key(x_webhook_api_key: str | None) -> None:
+def _require_tasks_api_key(x_webhook_api_key: Optional[str]) -> None:
     expected = (settings.webhook_api_key or "").strip()
     if not expected:
         return
@@ -142,6 +143,7 @@ async def handle_webhook(
             record.reply_status = intent
             record.reply_received_at = datetime.utcnow()
             record.raw_reply = body_text[:4000]  # guard against huge bodies
+            record.pipeline_status = intent.value
             db.commit()
             logger.info("Updated OutreachRecord for %s", sender_email)
         else:
@@ -159,7 +161,7 @@ async def handle_webhook(
 async def submit_task(
     background_tasks: BackgroundTasks,
     request: Request,
-    x_webhook_api_key: str | None = Header(default=None, alias="X-Webhook-Api-Key"),
+    x_webhook_api_key: Optional[str] = Header(default=None, alias="X-Webhook-Api-Key"),
 ) -> dict:
     """
     Enqueue a synchronous dispatch job (runs in-process after response).
@@ -195,7 +197,7 @@ async def submit_task(
 @app.get("/tasks/{task_id}")
 async def task_status(
     task_id: str,
-    x_webhook_api_key: str | None = Header(default=None, alias="X-Webhook-Api-Key"),
+    x_webhook_api_key: Optional[str] = Header(default=None, alias="X-Webhook-Api-Key"),
 ) -> dict:
     """Poll task status populated by the in-memory store."""
     _require_tasks_api_key(x_webhook_api_key)

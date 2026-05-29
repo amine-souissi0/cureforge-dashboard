@@ -28,7 +28,7 @@ def mark(task_id: str, **kwargs: Any) -> None:
             _STORE[task_id].update(kwargs)
 
 
-def get_snapshot(task_id: str) -> dict[str, Any] | None:
+def get_snapshot(task_id: str) -> Optional[dict]:
     with _lock:
         row = _STORE.get(task_id)
         return dict(row) if row else None

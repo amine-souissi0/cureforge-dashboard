@@ -2,13 +2,49 @@ import logging
 from typing import Optional
 
 from jinja2 import Template
-from openai import OpenAI
 
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-_client = OpenAI(api_key=settings.openai_api_key)
+# Use Groq (free) if key present, otherwise fall back to OpenAI
+def _make_client():
+    if settings.groq_api_key:
+        from openai import OpenAI  # Groq uses OpenAI-compatible API
+        return OpenAI(
+            api_key=settings.groq_api_key,
+            base_url="https://api.groq.com/openai/v1",
+            timeout=60.0,
+        ), settings.groq_model
+    else:
+        from openai import OpenAI
+        return OpenAI(api_key=settings.openai_api_key, timeout=60.0), settings.openai_model
+
+_client, _model = _make_client()
+
+
+def _groq_curl(prompt: str) -> str:
+    """Fallback: call Groq via requests if openai client times out."""
+    import json, urllib.request
+    body = json.dumps({
+        "model": settings.groq_model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 200,
+        "temperature": 0.7,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {settings.groq_api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())["choices"][0]["message"]["content"].strip()
 
 # Default base template — Jinja2 variables are filled by GPT-4 with context
 DEFAULT_TEMPLATE = """
@@ -67,17 +103,23 @@ def personalize(investor: dict, template: Optional[str] = None) -> str:
         f"Additional notes: {investor.get('notes', '')}\n"
     )
 
-    response = _client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.7,
-        max_tokens=200,
-    )
-
-    hook = response.choices[0].message.content.strip()
+    try:
+        response = _client.chat.completions.create(
+            model=_model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.7,
+            max_tokens=200,
+        )
+        hook = response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning("openai client failed (%s), falling back to urllib", e)
+        if settings.groq_api_key:
+            hook = _groq_curl(user_prompt)
+        else:
+            raise
     logger.debug("Generated hook for %s: %s", investor.get("email"), hook)
 
     rendered = Template(base).render(

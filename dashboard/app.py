@@ -54,7 +54,10 @@ def load_records() -> pd.DataFrame:
                 "Email": r.email,
                 "Firm": r.firm or "",
                 "Focus Area": r.focus_area or "",
+                "Pipeline Status": r.pipeline_status or "queued",
                 "Sent At": r.sent_at,
+                "Follow-up Stage": r.follow_up_stage or 0,
+                "Next Follow-up": r.next_follow_up_at,
                 "Reply Status": r.reply_status.value if r.reply_status else "pending",
                 "Reply Received": r.reply_received_at,
                 "Message ID": r.message_id or "",
@@ -136,13 +139,25 @@ def _color_status(val: str) -> str:
     return f"color: {color}; font-weight: bold;"
 
 
-display_cols = ["Name", "Email", "Firm", "Focus Area", "Sent At", "Reply Status", "Reply Received"]
+display_cols = [
+    "Name",
+    "Email",
+    "Firm",
+    "Focus Area",
+    "Pipeline Status",
+    "Sent At",
+    "Follow-up Stage",
+    "Next Follow-up",
+    "Reply Status",
+    "Reply Received",
+]
 styled = (
     filtered[display_cols]
     .style.map(_color_status, subset=["Reply Status"])
     .format(
         {
             "Sent At": lambda x: x.strftime("%Y-%m-%d %H:%M") if pd.notna(x) else "—",
+            "Next Follow-up": lambda x: x.strftime("%Y-%m-%d %H:%M") if pd.notna(x) else "—",
             "Reply Received": lambda x: x.strftime("%Y-%m-%d %H:%M") if pd.notna(x) else "—",
         }
     )
