@@ -21,6 +21,7 @@ def send_email(
     subject: str,
     html_body: str,
     from_email: Optional[str] = None,
+    reply_to: Optional[str] = None,
 ) -> str:
     """
     Send a single email via Resend and return the message ID.
@@ -35,6 +36,9 @@ def send_email(
         "subject": subject,
         "html": html_body,
     }
+    response_address = reply_to or settings.reply_to_email
+    if response_address:
+        params["reply_to"] = response_address
     response = resend.Emails.send(params)
     message_id: str = response["id"]
     logger.info("Email sent to %s — message_id=%s", to, message_id)
@@ -72,6 +76,9 @@ def send_and_record(
 
         record.sent_at = datetime.utcnow()
         record.message_id = message_id
+        record.drafted_subject = subject
+        record.drafted_body = html_body
+        record.pipeline_status = "sent"
         db.commit()
         return message_id
 
